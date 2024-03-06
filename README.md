@@ -15,13 +15,12 @@ Flutter package for rendering content on remote (e.g. WiFi- or Bluetooth-connect
     - example app using `flutter_remote_display`, flutter part
     - currently contains hardcoded values for the remote device bluetooth address
     - establishes the bluetooth connection, requests permissions
-    - renders a flutter logo to the remote display
 3. `flutterino_esp32`
-    - ESP32 part for `flutterino_flutter` as a PlatformIO project
+    - ESP32 part for `flutterino_flutter` as an ESP-IDF project
     - Currently assumes a TTGO T-Watch 2020 V1
     - some pins need to be updated for different versions of the watch,
       or different ESP32 boards
     - **For Development**:
-        - Install PlatformIO VS Code extension
-        - Open `flutterino_esp32` in a new VS Code window (it needs to be in its own window somehow for PlatformIO)
-        - No other configuration required. Just build & upload to your target board.
+        - Install ESP-IDF VS Code extension
+        - Use the extensions guide to install ESP-IDF v5.1 (_not_ 5.2, that's not supported by the arduino library)
+        - You should now be able to build & flash the project to an attached board, using the controls in the bottom bar.
