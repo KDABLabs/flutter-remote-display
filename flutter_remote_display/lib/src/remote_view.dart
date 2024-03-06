@@ -24,7 +24,7 @@ class _RemoteViewState extends State<RemoteView> {
     SchedulerBinding.instance.addPostFrameCallback(_onPostFrameCallback);
   }
 
-  void _onPostFrameCallback(Duration timestamp) async {
+  Future<void> _captureFrame() async {
     if (!mounted) return;
 
     if (!widget.connection.isConnected) return;
@@ -36,12 +36,20 @@ class _RemoteViewState extends State<RemoteView> {
       return;
     }
 
-    final frame = await renderObject.toImage();
+    final frame = await (renderObject.layer as OffsetLayer).toImage(
+      Offset.zero & renderObject.size,
+      pixelRatio: 1.0,
+    );
+    // final frame = await renderObject.toImage();
     if (!mounted) return;
 
     widget.connection.add(frame);
 
     frame.dispose();
+  }
+
+  void _onPostFrameCallback(Duration timestamp) async {
+    await _captureFrame();
 
     _schedulePostFrameCallback();
   }
@@ -51,6 +59,13 @@ class _RemoteViewState extends State<RemoteView> {
     super.initState();
 
     _schedulePostFrameCallback();
+  }
+
+  @override
+  void reassemble() {
+    super.reassemble();
+
+    _captureFrame();
   }
 
   @override
