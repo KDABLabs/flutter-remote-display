@@ -1,3 +1,6 @@
 [submodule "flutterino_esp32/components/TFT_eSPI"]
 	path = flutterino_esp32/components/TFT_eSPI
-	url = https://github.com/Bodmer/TFT_eSPI.git
+	url = https://github.com/Bodmer/TFT_eSPI
+[submodule "flutterino_esp32/components/arduino"]
+	path = flutterino_esp32/components/arduino
+	url = https://github.com/espressif/arduino-esp32
