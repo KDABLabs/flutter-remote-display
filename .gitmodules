@@ -1,0 +1,3 @@
+[submodule "flutterino_esp32/components/TFT_eSPI"]
+	path = flutterino_esp32/components/TFT_eSPI
+	url = https://github.com/Bodmer/TFT_eSPI.git

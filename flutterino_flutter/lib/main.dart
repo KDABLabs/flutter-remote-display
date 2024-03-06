@@ -122,7 +122,8 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                       child: TickerMode(
                         // don't animate the flutter logo
-                        enabled: false,
+                        enabled: true,
+
                         child: RemoteView(
                           connection: displayConnection,
                           child: const Center(
@@ -130,9 +131,21 @@ class _MyHomePageState extends State<MyHomePage> {
                               color: Colors.white,
                               child: Padding(
                                 padding: EdgeInsets.all(12),
-                                child: FlutterLogo(
-                                  size: 120,
-                                  style: FlutterLogoStyle.stacked,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    FlutterLogo(
+                                      size: 18,
+                                    ),
+                                    Text('lutterino loading...'),
+                                    SizedBox(
+                                      width: 18,
+                                    ),
+                                    SizedBox.square(
+                                      dimension: 15,
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
