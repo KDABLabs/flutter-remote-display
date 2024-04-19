@@ -18,11 +18,12 @@
 #include "esp_spp_api.h"
 #include "driver/i2c.h"
 #include "esp32-hal-periman.h"
+#include "flutter_remote_display.h"
 
 #include <Arduino.h>
 #include <axp20x.h>
-
 #include <TFT_eSPI.h>
+#include <focaltech_touch.h>
 
 const char *spp_log_tag = "Flutterino Demo";
 const char *bluetooth_spp_name = "Flutterino SPP";
@@ -49,7 +50,7 @@ static char *bda2str(uint8_t * bda, char *str, size_t size)
     return str;
 }
 
-static void print_speed(void)
+__attribute__((unused)) static void print_speed(void)
 {
     float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
     float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
@@ -63,163 +64,31 @@ static void print_speed(void)
 
 TFT_eSPI tft = TFT_eSPI(240, 240);
 AXP20X_Class axp = AXP20X_Class();
+struct flrd flrd;
 
-struct pixelbuffer {
-    uint8_t left, top, width, height;
-    bool is_dma;
+FocalTech_Class touchscreen;
 
-    uint8_t __attribute__ ((aligned (4))) data[];
+struct btspp_connection {
+    uint32_t conn_handle;
+} flrd_btspp_connection;
+
+static void on_flrd_btspp_send_bytes(void *context, size_t n_bytes, void *bytes) {
+    struct btspp_connection *conn;
+    esp_err_t ok;
+    
+    conn = (struct btspp_connection*) context;
+
+    ok = esp_spp_write(conn->conn_handle, n_bytes, (uint8_t*) bytes);
+    if (ok != ESP_OK) {
+        ESP_LOGE(spp_log_tag, "esp_spp_write failed: %s", esp_err_to_name(ok));
+    }
+}
+
+const static struct flrd_btspp_interface btspp_driver = {
+    .send_bytes = on_flrd_btspp_send_bytes
 };
-
-#define FRAME_MAX_N_BUFFERS 8
-
-struct frame {
-    uint8_t left, top, width, height;
-
-    size_t n_buffers;
-    struct pixelbuffer *buffers[FRAME_MAX_N_BUFFERS];
-};
-
-static size_t sizeof_pixelbuffer(uint8_t width, uint8_t height) {
-    return sizeof(struct pixelbuffer) + width * height * 2;
-} 
-
-static struct pixelbuffer *pixelbuffer_new(uint8_t left, uint8_t top, uint8_t width, uint8_t height) {
-    struct pixelbuffer *frame = (struct pixelbuffer*) heap_caps_malloc(sizeof_pixelbuffer(width, height), MALLOC_CAP_DMA);
-    if (frame == NULL) {
-        frame = (struct pixelbuffer*) heap_caps_malloc(sizeof_pixelbuffer(width, height), MALLOC_CAP_DEFAULT);
-        if (frame == NULL) {
-            return NULL;
-        }
-
-        frame->is_dma = false;
-    } else {
-        frame->is_dma = true;
-    }
-
-    frame->left = left;
-    frame->top = top;
-    frame->width = width;
-    frame->height = height;
-
-    return frame;
-}
-
-static void pixelbuffer_destroy(struct pixelbuffer *buffer) {
-    heap_caps_free(buffer);
-}
-
-static size_t pixelbuffer_size(struct pixelbuffer *buffer) {
-    return buffer->width * buffer->height * 2;
-}
-
-static struct frame *frame_new(uint8_t left, uint8_t top, uint8_t width, uint8_t height) {
-    struct frame *frame = (struct frame*) heap_caps_malloc(sizeof(struct frame), MALLOC_CAP_DEFAULT);
-    if (frame == NULL) {
-        return NULL;
-    }
-
-    frame->left = left;
-    frame->top = top;
-    frame->width = width;
-    frame->height = height;
-    frame->n_buffers = 0;
-
-    for (size_t n_buffers = 1; n_buffers <= FRAME_MAX_N_BUFFERS; n_buffers++) {
-        struct pixelbuffer *buffers[n_buffers];
-
-        if (height % n_buffers != 0) {
-            continue;
-        }
-
-        int buffer_width = width;
-        int buffer_height = height / n_buffers;
-
-        for (int i = 0; i < n_buffers; i++) {
-            struct pixelbuffer *buffer = pixelbuffer_new(left, top + i * buffer_height, buffer_width, buffer_height);
-            if (buffer == NULL) {
-                goto fail_free_buffers;
-            }
-
-            buffers[i] = buffer;
-            continue;
-
-
-            fail_free_buffers:
-            for (int j = 0; j < i; j++) {
-                pixelbuffer_destroy(buffers[j]);
-            }
-
-            goto fail_continue;
-        }
-
-        frame->n_buffers = n_buffers;
-        memcpy(frame->buffers, buffers, sizeof(buffers));
-        goto success;
-
-
-        fail_continue:
-        continue;
-    }
-
-    heap_caps_free(frame);
-    return NULL;
-
-
-    success:
-    return frame;
-}
-
-static void frame_destroy(struct frame *frame) {
-    for (size_t i = 0; i < frame->n_buffers; i++) {
-        pixelbuffer_destroy(frame->buffers[i]);
-    }
-
-    heap_caps_free(frame);
-}
-
-static void frame_write_pixels(struct frame *frame, size_t offset, void *source, size_t length) {
-    size_t buffer_index = 0;
-    size_t buffer_offset = offset;
-
-    while (buffer_offset >= pixelbuffer_size(frame->buffers[buffer_index])) {
-        buffer_offset -= pixelbuffer_size(frame->buffers[buffer_index]);
-        buffer_index++;
-    }
-
-    while (length > 0) {
-        size_t to_copy = pixelbuffer_size(frame->buffers[buffer_index]) - buffer_offset;
-        if (to_copy > length) {
-            to_copy = length;
-        }
-
-        memcpy((uint8_t*) (frame->buffers[buffer_index]->data) + buffer_offset, source, to_copy);
-
-        source += to_copy;
-        length -= to_copy;
-        buffer_offset += to_copy;
-
-        if (buffer_offset == pixelbuffer_size(frame->buffers[buffer_index])) {
-            buffer_index++;
-            buffer_offset = 0;
-        }
-    }
-}
-
-static size_t frame_size(struct frame *frame) {
-    return frame->width * frame->height * 2;
-}
-
-static StaticQueue_t frame_queue_buffer;
-static uint8_t frame_queue_storage[ 2 * sizeof(void*)];
-static QueueHandle_t frame_queue;
 
 static void on_spp_event(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
-    static struct frame *frame = NULL;
-    static int left, top, width, height;
-    static int frame_bytes_remaining = 0, pixel_offset = 0, frame_offset = 0;
-    static bool discarding = false;
-
     char bda_str[18] = {0};
 
     switch (event) {
@@ -235,7 +104,7 @@ static void on_spp_event(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
         ESP_LOGI(spp_log_tag, "ESP_SPP_DISCOVERY_COMP_EVT");
         break;
     case ESP_SPP_OPEN_EVT:
-        ESP_LOGI(spp_log_tag, "ESP_SPP_OPEN_EVT");
+        ESP_LOGI(spp_log_tag, "ESP_SPP_OPEN_EVT handle: %" PRIu32, param->open.handle);
         break;
     case ESP_SPP_CLOSE_EVT:
         ESP_LOGI(spp_log_tag, "ESP_SPP_CLOSE_EVT status:%d handle:%" PRIu32 " close_by_remote:%d", param->close.status,
@@ -254,76 +123,15 @@ static void on_spp_event(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
     case ESP_SPP_CL_INIT_EVT:
         ESP_LOGI(spp_log_tag, "ESP_SPP_CL_INIT_EVT");
         break;
-    case ESP_SPP_DATA_IND_EVT:
-        for (int i = 0; i < param->data_ind.len;) {
-            if (discarding) {
-                int to_discard = param->data_ind.len - i;
-                if (to_discard > frame_bytes_remaining) {
-                    to_discard = frame_bytes_remaining;
-                }
+    case ESP_SPP_DATA_IND_EVT: {
+        int64_t time = esp_timer_get_time();
+        
+        flrd_add_btspp_bytes(&flrd, param->data_ind.len, param->data_ind.data);
 
-                i += to_discard;
-                frame_bytes_remaining -= to_discard;
-
-                if (frame_bytes_remaining == 0) {
-                    discarding = false;
-                }
-            } else if (frame == NULL && frame_offset == 0) {
-                left = param->data_ind.data[i++];
-                frame_offset += 1;
-            } else if (frame == NULL && frame_offset == 1) {
-                top = param->data_ind.data[i++];
-                frame_offset += 1;
-            } else if (frame == NULL && frame_offset == 2) {
-                width = param->data_ind.data[i++];
-                frame_offset += 1;
-            } else if (frame == NULL && frame_offset == 3) {
-                height = param->data_ind.data[i++];
-                frame_offset += 1;
-                pixel_offset = 0;
-                frame_bytes_remaining = width * height * 2;
-
-                frame = frame_new(left, top, width, height);
-                if (frame == NULL) {
-                    ESP_LOGW(spp_log_tag, "Allocating frame failed. Dropping frame.");
-                    discarding = true;
-                    continue;
-                }
-            } else if (frame != NULL) {
-                // find the correct frame buffer to write to, by iterating over the buffers and adding their sizes
-                int to_copy = param->data_ind.len - i;
-                if (frame_bytes_remaining < to_copy) {
-                    to_copy = frame_bytes_remaining;
-                }
-                
-                frame_write_pixels(frame, pixel_offset, param->data_ind.data + i, to_copy);
-
-                frame_offset += to_copy;
-                pixel_offset += to_copy;
-                frame_bytes_remaining -= to_copy;
-                i += to_copy;
-            }
-
-            if (frame != NULL && frame_bytes_remaining == 0) {
-                BaseType_t ok = xQueueSend(frame_queue, &frame, 0);
-                if (ok == errQUEUE_FULL) {
-                    ESP_LOGW(spp_log_tag, "Frame queue full, dropping frame");
-                }
-
-                frame = NULL;
-                frame_bytes_remaining = 0;
-                pixel_offset = 0;
-                frame_offset = 0;
-            }
-        }
-
-        gettimeofday(&time_new, NULL);
-        data_num += param->data_ind.len;
-        if (time_new.tv_sec - time_old.tv_sec >= 3) {
-            print_speed();
-        }
+        ESP_LOGI(spp_log_tag, "flrd_add_btspp_bytes took %lldus", esp_timer_get_time() - time);
 
         break;
+    }
     case ESP_SPP_CONG_EVT:
         ESP_LOGI(spp_log_tag, "ESP_SPP_CONG_EVT");
         break;
@@ -331,9 +139,14 @@ static void on_spp_event(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
         ESP_LOGI(spp_log_tag, "ESP_SPP_WRITE_EVT");
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        ESP_LOGI(spp_log_tag, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%" PRIu32 ", rem_bda:[%s]", param->srv_open.status,
-                 param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
+        ESP_LOGI(
+            spp_log_tag, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%" PRIu32 ", rem_bda:[%s]",
+            param->srv_open.status,
+            param->srv_open.handle,
+            bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str))
+        );
         gettimeofday(&time_old, NULL);
+        flrd_btspp_connection.conn_handle = param->srv_open.handle;
         break;
     case ESP_SPP_SRV_STOP_EVT:
         ESP_LOGI(spp_log_tag, "ESP_SPP_SRV_STOP_EVT");
@@ -404,45 +217,128 @@ static void on_bt_gap_event(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *
     return;
 }
 
+
+bool in_transaction = false;
+
+static void display_set_window(void *context, struct rect window) {
+    TFT_eSPI *tft = (TFT_eSPI*) context;
+
+    if (!in_transaction) {
+        tft->startWrite();
+        in_transaction = true;
+    }
+
+    tft->setWindow(window.left, window.top, window.left + window.width - 1, window.top + window.height - 1);
+}
+
+static void display_write_pixels(void *context, size_t n_pixels, uint16_t *rgb565_pixels) {
+    TFT_eSPI *tft = (TFT_eSPI*) context;
+
+    if (!in_transaction) {
+        tft->startWrite();
+        in_transaction = true;
+    }
+
+    tft->pushPixels(rgb565_pixels, n_pixels);
+}
+
+static void display_write_pixel_run(void *context, size_t n_pixels, uint16_t rgb565) {
+    TFT_eSPI *tft = (TFT_eSPI*) context;
+
+    if (!in_transaction) {
+        tft->startWrite();
+        in_transaction = true;
+    }
+
+    tft->pushBlock(rgb565, n_pixels);
+}
+
+static void display_present(void *context) {
+    TFT_eSPI *tft = (TFT_eSPI*) context;
+    
+    if (in_transaction) {
+        tft->endWrite();
+        in_transaction = false;
+    }
+}
+
+const static struct flrd_display_driver display_driver = {
+    .set_window = display_set_window,
+    .write_pixels = display_write_pixels,
+    .write_pixel_run = display_write_pixel_run,
+    .present = display_present
+};
+
+
 // This task is responsible for committing frames produced by the bluetooth
 // SPP task to the TFT display.
-static void frame_committer_task(void *pvParameters) {
-    struct frame *frame = NULL;
+static void packet_handler_task(void *arg) {
+    struct flrd *flrd = (struct flrd*) arg;
+    
+    struct timeval last_frame_time;
+    int n_frames = 0;
 
     while (true) {
-        BaseType_t result = xQueueReceive(frame_queue, &frame, portMAX_DELAY);
-        if (result != pdTRUE) {
+        struct flrd_packet *packet = flrd_wait_for_packet(flrd);
+        if (packet == NULL) {
+            ESP_LOGE(spp_log_tag, "flrd_wait_for_packet failed");
             continue;
         }
 
-        for (size_t i = 0; i < frame->n_buffers; i++) {
-            struct pixelbuffer *buffer = frame->buffers[i];
+        switch (packet->type) {
+            case FLRD_PACKET_BACKLIGHT:
+                ESP_LOGI(spp_log_tag, "received backlight packet. intensity: %d%%", packet->backlight.intensity * 100 / 255);
+                digitalWrite(TFT_BL, packet->backlight.intensity != 0 ? TFT_BACKLIGHT_ON : 0 == TFT_BACKLIGHT_ON);
+                break;
+            case FLRD_PACKET_VIBRATION:
+                ESP_LOGI(spp_log_tag, "received vibration packet. duration: %dms (not supported right now)", (int) packet->vibration.duration_millis * 10);
+                break;
+            case FLRD_PACKET_PING:
+                ESP_LOGI(spp_log_tag, "received ping packet");
+                flrd_send_pong(flrd);
+                break;
+            case FLRD_PACKET_FRAME: {
+                if (n_frames == 60) {
+                    struct timeval now;
+                    gettimeofday(&now, NULL);
 
-            ESP_LOGD(spp_log_tag, "Committing buffer to TFT. size: %d bytes, dma: %s", pixelbuffer_size(buffer), buffer->is_dma ? "yes" : "no");
+                    float fps = 60.0 / (now.tv_sec - last_frame_time.tv_sec + (now.tv_usec - last_frame_time.tv_usec) / 1000000.0);
+                    ESP_LOGI(spp_log_tag, "fps: %f", fps);
 
-            tft.startWrite();
-            tft.setWindow(buffer->left, buffer->top, buffer->left + buffer->width - 1, buffer->top + buffer->height - 1);
-            if (buffer->is_dma) {
-                tft.pushPixelsDMA((uint16_t*) buffer->data, pixelbuffer_size(buffer) / 2);
-            } else {
-                tft.pushPixels((uint16_t*) buffer->data, pixelbuffer_size(buffer) / 2);
+                    last_frame_time = now;
+                    n_frames = 0;
+                } else if (n_frames == 0) {
+                    gettimeofday(&last_frame_time, NULL);
+                }
+
+                n_frames++;
+
+                int64_t time = esp_timer_get_time();
+
+                flrd_frame_present(flrd, &packet->frame, &display_driver, &tft);
+
+                ESP_LOGI(spp_log_tag, "flrd_frame_present took %lldus", esp_timer_get_time() - time);
+
+                break;
             }
-            tft.endWrite();
+            default:
+                ESP_LOGE(spp_log_tag, "unhandled packet: %d", packet->type);
+                break;
         }
 
-        frame_destroy(frame);
+        flrd_packet_free(packet);
     }
 }
 
 // Init I2C port as Bus Master with SDA pin 21 and SCL pin 22
 // and a clock speed of 100kHz
-static void i2c_init_master(i2c_port_t port) {
+static void i2c_init_master(i2c_port_t port, gpio_num_t sda, gpio_num_t scl) {
     esp_err_t esp_ok;
 
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
-        .sda_io_num = SDA,
-        .scl_io_num = SCL,
+        .sda_io_num = sda,
+        .scl_io_num = scl,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master = {
@@ -474,11 +370,15 @@ static void i2c_init_master(i2c_port_t port) {
     }
 }
 
-static esp_err_t i2c0_read_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+static esp_err_t i2c_read_register(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
     i2c_cmd_handle_t cmd;
     esp_err_t ok;
 
     cmd = i2c_cmd_link_create();
+    if (cmd == NULL) {
+        ok = ESP_ERR_NO_MEM;
+        goto fail_clear_data;
+    }
 
     ok = i2c_master_start(cmd);
     if (ok != ESP_OK) {
@@ -515,7 +415,7 @@ static esp_err_t i2c0_read_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t 
         goto fail_free_cmd;
     }
 
-    ok = i2c_master_cmd_begin(I2C_NUM_0, cmd, 50 / portTICK_PERIOD_MS);
+    ok = i2c_master_cmd_begin(port, cmd, 50 / portTICK_PERIOD_MS);
     if (ok != ESP_OK) {
         ESP_LOGE(spp_log_tag, "i2c_master_cmd_begin failed: %s", esp_err_to_name(ok));
         goto fail_free_cmd;
@@ -526,10 +426,13 @@ static esp_err_t i2c0_read_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t 
 
 fail_free_cmd:
     i2c_cmd_link_delete(cmd);
+
+fail_clear_data:
+    memset(data, 0, len);
     return ok;
 }
 
-static esp_err_t i2c0_write_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+static esp_err_t i2c_write_register(i2c_port_t port, uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
     i2c_cmd_handle_t cmd;
     esp_err_t ok;
 
@@ -560,7 +463,7 @@ static esp_err_t i2c0_write_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t
         goto fail_free_cmd;
     }
 
-    ok = i2c_master_cmd_begin(I2C_NUM_0, cmd, 50 / portTICK_PERIOD_MS);
+    ok = i2c_master_cmd_begin(port, cmd, 50 / portTICK_PERIOD_MS);
     if (ok != ESP_OK) {
         ESP_LOGE(spp_log_tag, "i2c_master_cmd_begin failed: %s", esp_err_to_name(ok));
         goto fail_free_cmd;
@@ -574,11 +477,40 @@ fail_free_cmd:
     return ok;
 }
 
+static esp_err_t i2c0_read_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+    return i2c_read_register(I2C_NUM_0, dev_addr, reg_addr, data, len);
+}
+
+static esp_err_t i2c0_write_register(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+    return i2c_write_register(I2C_NUM_0, dev_addr, reg_addr, data, len);
+}
+
+static uint8_t i2c1_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+    esp_err_t ok;
+    
+    ok = i2c_read_register(I2C_NUM_1, dev_addr, reg_addr, data, len);
+    if (ok != ESP_OK) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static uint8_t i2c1_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t len) {
+    esp_err_t ok;
+    
+    ok = i2c_write_register(I2C_NUM_1, dev_addr, reg_addr, data, len);
+    if (ok != ESP_OK) {
+        return 0;
+    }
+
+    return 1;
+}
+
 // T-Watch stuff. AXP202 is the power management IC on the T-Watch
 static bool axp_probe() {
     uint8_t output_reg;
     uint8_t chip_id;
-    uint8_t data;
     esp_err_t ok;
 
     ok = i2c0_read_register(AXP202_SLAVE_ADDRESS, AXP202_IC_TYPE, &chip_id, 1);
@@ -649,12 +581,64 @@ static bool axp_set_channel(uint8_t channel, bool enabled) {
     return true;
 }
 
+struct touch_task_arg {
+    struct flrd *flrd;
+    FocalTech_Class *touchscreen;
+};
+
+static void touch_task(void *arg_void) {
+    struct touch_task_arg *arg = (struct touch_task_arg*) arg_void;
+
+    uint16_t last_x, last_y;
+    bool last_pressed = false;
+
+    while (true) {
+        // delay for 5ms
+        vTaskDelay(16 / portTICK_PERIOD_MS);
+        
+        struct flrd_touch_event_packet touch_event;
+        uint16_t x, y;
+        bool pressed;
+        
+        pressed = arg->touchscreen->getPoint(x, y);
+
+        if (pressed && (!last_pressed || x != last_x || y != last_y)) {
+            ESP_LOGI(spp_log_tag, "touch %s, x=%d y=%d", last_pressed ? "move" : "down", x, y);
+
+            touch_event.pointer = 0;
+            touch_event.timestamp = 0;
+            touch_event.phase = last_pressed ? FLRD_TOUCH_EVENT_PHASE_MOVE : FLRD_TOUCH_EVENT_PHASE_DOWN;
+            touch_event.x = TFT_WIDTH - x;
+            touch_event.y = TFT_HEIGHT - y;
+            flrd_send_touch_event(arg->flrd, &touch_event);
+
+        } else if (last_pressed && !pressed) {
+            ESP_LOGI(spp_log_tag, "touch up");
+
+            touch_event.pointer = 0;
+            touch_event.timestamp = 0;
+            touch_event.phase = FLRD_TOUCH_EVENT_PHASE_UP;
+            touch_event.x = x;
+            touch_event.y = y;
+            flrd_send_touch_event(arg->flrd, &touch_event);
+        }
+
+        last_x = x;
+        last_y = y;
+        last_pressed = pressed;
+    }
+
+    free(arg);
+}
+
 extern "C" void app_main(void) {
     bool ok;
-    frame_queue = xQueueCreateStatic(2, sizeof(void*), frame_queue_storage, &frame_queue_buffer);
 
-    // Initialize the I2C bus (Needed to communicate with the AXP)
-    i2c_init_master(I2C_NUM_0);
+    // Initialize the I2C0 on pins 21, 22 for the AXP202 power management IC
+    i2c_init_master(I2C_NUM_0, GPIO_NUM_21, GPIO_NUM_22);
+
+    // Initialize the I2C1 on pins 23, 32 for the touchscreen
+    i2c_init_master(I2C_NUM_1, GPIO_NUM_23, GPIO_NUM_32);
     
     // Initialize the AXP202 power management IC
     ok = axp_probe();
@@ -676,6 +660,11 @@ extern "C" void app_main(void) {
     // Clear the screen to white
     tft.fillScreen(0xFFFF);
 
+    bool hasTouch = touchscreen.begin(i2c1_read, i2c1_write);
+    if (!hasTouch) {
+        ESP_LOGE(spp_log_tag, "Could not initialize FT5206 touchscreen controller.");
+    }
+
     esp_bt_controller_status_t status = esp_bt_controller_get_status();
     ESP_LOGI(spp_log_tag, "bt controller status: %s", status == ESP_BT_CONTROLLER_STATUS_IDLE ? "idle" :
         status == ESP_BT_CONTROLLER_STATUS_INITED ? "inited" :
@@ -690,8 +679,6 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK( ret );
 
-    // ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
-    
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
     if (ret != ESP_OK) {
@@ -729,7 +716,13 @@ extern "C" void app_main(void) {
         return;
     }
 
-    ret = esp_spp_init(esp_spp_mode);
+    const esp_spp_cfg_t spp_cfg = {
+        .mode = ESP_SPP_MODE_CB,
+        .enable_l2cap_ertm = true,
+        .tx_buffer_size = ESP_SPP_MAX_TX_BUFFER_SIZE,
+    };
+
+    ret = esp_spp_enhanced_init(&spp_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(spp_log_tag, "%s spp init failed: %s", __func__, esp_err_to_name(ret));
         return;
@@ -745,5 +738,16 @@ extern "C" void app_main(void) {
 
     ESP_LOGI(spp_log_tag, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
 
-    xTaskCreate(frame_committer_task, "frame_committer", 4096, NULL, 5, NULL);
+    flrd_init(&flrd, TFT_WIDTH, TFT_HEIGHT, &btspp_driver, &flrd_btspp_connection);
+
+    xTaskCreate(packet_handler_task, "packet_handler", 4096, &flrd, 5, NULL);
+
+    if (hasTouch) {
+        struct touch_task_arg *arg = (struct touch_task_arg*) malloc(sizeof(struct touch_task_arg));
+
+        arg->flrd = &flrd;
+        arg->touchscreen = &touchscreen;
+
+        xTaskCreate(touch_task, "touch_task", 4096, arg, 5, NULL);
+    }
 }

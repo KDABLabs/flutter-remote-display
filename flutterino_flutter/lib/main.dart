@@ -126,30 +126,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
                         child: RemoteView(
                           connection: displayConnection,
-                          child: const Center(
-                            child: Card(
-                              color: Colors.white,
-                              child: Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    FlutterLogo(
-                                      size: 18,
-                                    ),
-                                    Text('lutterino loading...'),
-                                    SizedBox(
-                                      width: 18,
-                                    ),
-                                    SizedBox.square(
-                                      dimension: 15,
-                                      child: CircularProgressIndicator(),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
+                          child: InteractiveRemoteTestWidget(),
                         ),
                       ),
                     ),
@@ -160,6 +137,96 @@ class _MyHomePageState extends State<MyHomePage> {
               },
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class InteractiveRemoteTestWidget extends StatelessWidget {
+  InteractiveRemoteTestWidget({
+    super.key,
+  });
+
+  final MaterialStateProperty<Icon?> thumbIcon =
+      MaterialStateProperty.resolveWith<Icon?>(
+    (Set<MaterialState> states) {
+      if (states.contains(MaterialState.selected)) {
+        return const Icon(Icons.check);
+      }
+      return const Icon(Icons.close);
+    },
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    var checked = false;
+
+    return MaterialApp(
+      home: Center(
+        child: Card(
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Tooltip(
+              message: 'Flutterino 0.1',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const FlutterLogo(size: 18),
+                  const Text('lutterino'),
+                  const SizedBox(width: 18),
+                  StatefulBuilder(
+                    builder: (context, setState) {
+                      return Switch(
+                        value: checked,
+                        thumbIcon: thumbIcon,
+                        onChanged: (value) {
+                          setState(() {
+                            checked = value;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AnimatingRemoteTestWidget extends StatelessWidget {
+  const AnimatingRemoteTestWidget({
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Card(
+        color: Colors.white,
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FlutterLogo(
+                size: 18,
+              ),
+              Text('lutterino loading...'),
+              SizedBox(
+                width: 18,
+              ),
+              SizedBox.square(
+                dimension: 15,
+                child: CircularProgressIndicator(),
+              ),
+            ],
+          ),
         ),
       ),
     );
