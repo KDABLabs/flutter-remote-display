@@ -685,8 +685,10 @@ extern "C" void app_main(void) {
         ESP_LOGE(spp_log_tag, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+
+    ESP_STATIC_ASSERT(BTDM_CONTROLLER_MODE_EFF == ESP_BT_MODE_CLASSIC_BT || BTDM_CONTROLLER_MODE_EFF == ESP_BT_MODE_BTDM, "bluetooth controller mode must be bluetooth classic or bluetooth dual mode");
     
-    ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+    ret = esp_bt_controller_enable(BTDM_CONTROLLER_MODE_EFF);
     if (ret != ESP_OK) {
         ESP_LOGE(spp_log_tag, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;

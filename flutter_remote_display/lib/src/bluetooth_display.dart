@@ -9,7 +9,6 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:flutter_remote_display/flutter_remote_display.dart';
 import 'package:flutter_remote_display/src/protocol.dart';
-import 'encoding.dart';
 
 class BluetoothDisplayConnection extends DisplayConnection {
   BluetoothDisplayConnection._(this._connection)

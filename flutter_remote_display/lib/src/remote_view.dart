@@ -6,7 +6,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_remote_display/flutter_remote_display.dart';
 import 'package:flutter_remote_display/src/bluetooth_display.dart';
-import 'package:flutter_remote_display/src/display.dart';
 import 'package:flutter_remote_display/src/protocol.dart';
 
 class RemoteView extends StatefulWidget {

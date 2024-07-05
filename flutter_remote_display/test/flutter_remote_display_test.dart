@@ -1,6 +1,3 @@
-import 'dart:ffi';
-
-import 'package:flutter/material.dart';
 import 'package:flutter_remote_display/flutter_remote_display.dart';
 import 'package:flutter_test/flutter_test.dart';
 

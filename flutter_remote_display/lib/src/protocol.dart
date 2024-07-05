@@ -1,9 +1,7 @@
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:buffer/buffer.dart';
 import 'package:collection/collection.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_remote_display/flutter_remote_display.dart';
 import 'package:flutter_remote_display/src/encoding.dart';
 

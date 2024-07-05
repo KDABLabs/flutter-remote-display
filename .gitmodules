@@ -7,3 +7,6 @@
 [submodule "flutterino_esp32/components/axp20x"]
 	path = flutterino_esp32/components/axp20x
 	url = https://github.com/lewisxhe/AXP202X_Library.git
+[submodule "wonders"]
+	path = wonders
+	url = https://github.com/ardera/flutter-wonderous-app.git
