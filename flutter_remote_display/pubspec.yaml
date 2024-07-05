@@ -1,7 +1,7 @@
 name: flutter_remote_display
 description: "A new Flutter package project."
-version: 0.0.1
-homepage:
+version: 0.1.0
+homepage: https://github.com/KDABLabs/flutter-remote-display.git
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
